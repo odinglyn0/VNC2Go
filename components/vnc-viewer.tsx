@@ -86,6 +86,7 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
     rfb.scaleViewport = true
     rfb.clipViewport = true
     rfb.resizeSession = false
+    rfb.showDotCursor = true
     rfb.background = "transparent"
     rfbRef.current = rfb
 
