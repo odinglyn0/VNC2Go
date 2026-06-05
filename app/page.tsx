@@ -14,7 +14,7 @@ const jsonLd = {
   applicationCategory: "UtilitiesApplication",
   operatingSystem: "Any",
   description:
-    "Connect to any RFC-compliant VNC server straight from your browser. End-to-end encrypted with the ITEKey protocol, zero data retention, EU jurisdiction.",
+    "Connect to any VNC server straight from your browser.",
   offers: {
     "@type": "Offer",
     price: "0",
