@@ -103,13 +103,6 @@ async function handleResolve(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Server is missing its signing secret" }, { status: 500 })
   }
 
-  if (privateMode && !process.env.WEBSHARE_PROXY_USERNAME) {
-    return NextResponse.json(
-      { error: "Private mode is not configured on this deployment" },
-      { status: 503, headers: { "cache-control": "no-store" } },
-    )
-  }
-
   let proxyBase: string
   try {
     proxyBase = getProxyBase()
