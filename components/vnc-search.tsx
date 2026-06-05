@@ -31,6 +31,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { HumanGate } from "@/components/human-gate"
 import { VncLoginDialog } from "@/components/vnc-login-dialog"
 import { SiteFooter } from "@/components/site-footer"
+import { VncToolbar } from "@/components/vnc-toolbar"
 import type { VncViewerHandle } from "@/components/vnc-viewer"
 
 const VncViewer = dynamic(() => import("@/components/vnc-viewer").then((mod) => mod.VncViewer), {
@@ -42,34 +43,10 @@ const VncViewer = dynamic(() => import("@/components/vnc-viewer").then((mod) => 
   ),
 })
 
-const MeshGradient = dynamic(
-  () => import("@paper-design/shaders-react").then((mod) => mod.MeshGradient),
+const GrainGradient = dynamic(
+  () => import("@paper-design/shaders-react").then((mod) => mod.GrainGradient),
   { ssr: false },
 )
-
-function hslToHex(h: number, s: number, l: number): string {
-  const saturation = s / 100
-  const lightness = l / 100
-  const a = saturation * Math.min(lightness, 1 - lightness)
-  const channel = (n: number) => {
-    const k = (n + h / 30) % 12
-    const value = lightness - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))
-    return Math.round(255 * value)
-      .toString(16)
-      .padStart(2, "0")
-  }
-  return `#${channel(0)}${channel(8)}${channel(4)}`
-}
-
-function randomGradientColors(): string[] {
-  const baseHue = Math.floor(Math.random() * 360)
-  return [
-    hslToHex(baseHue % 360, 30 + Math.random() * 25, 86 + Math.random() * 8),
-    hslToHex((baseHue + 35 + Math.random() * 60) % 360, 72 + Math.random() * 24, 20 + Math.random() * 16),
-    hslToHex((baseHue + 150 + Math.random() * 60) % 360, 70 + Math.random() * 25, 52 + Math.random() * 12),
-    hslToHex((baseHue + 240 + Math.random() * 60) % 360, 62 + Math.random() * 30, 54 + Math.random() * 14),
-  ]
-}
 
 type ViewerStatus = "connecting" | "credentials" | "connected" | "closed" | "error"
 
@@ -83,12 +60,6 @@ export function VncSearch() {
   const [loginOpen, setLoginOpen] = React.useState(false)
   const [humanGateOpen, setHumanGateOpen] = React.useState(false)
   const [verified, setVerified] = React.useState(false)
-  const [gradientColors, setGradientColors] = React.useState<string[]>(() => [
-    "#e0eaff",
-    "#241d9a",
-    "#f75092",
-    "#9f50d3",
-  ])
 
   const viewerRef = React.useRef<VncViewerHandle | null>(null)
   const abortRef = React.useRef<AbortController | null>(null)
@@ -121,7 +92,6 @@ export function VncSearch() {
 
       setPhase("resolving")
       setErrorMessage(null)
-      setGradientColors(randomGradientColors())
 
       try {
         const result = await resolveVncAddress(trimmed, usePrivate, controller.signal)
@@ -254,70 +224,20 @@ export function VncSearch() {
 
     return (
       <TooltipProvider>
-        <div className="flex h-svh w-full flex-col bg-background">
-          <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b px-4">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="font-coolvetica text-2xl leading-none">VNC2Go</span>
-              <Badge variant="secondary" className="gap-1">
-                <MonitorIcon className="size-3" />
-                <span className="truncate">{connection.target.display}</span>
-              </Badge>
-              {connection.privateMode && connection.proxyCountry ? (
-                <Badge variant="outline" className="gap-1">
-                  <ShieldCheckIcon className="size-3" />
-                  Private · {connection.proxyCountry}
-                </Badge>
-              ) : null}
-              <StatusBadge phase={phase} />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Badge
-                    variant={timer.remainingMs !== null && timer.remainingMs < 60000 ? "destructive" : "secondary"}
-                    className="gap-1 font-mono tabular-nums"
-                  >
-                    <ClockIcon className="size-3" />
-                    {hardLabel}
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {connection.hardCapMs > 0
-                    ? "Time remaining before the session ends"
-                    : "Session duration"}
-                  <br />
-                  Idle disconnect in {formatDuration(timer.idleRemainingMs)}
-                </TooltipContent>
-              </Tooltip>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => viewerRef.current?.sendCtrlAltDel()}
-                disabled={phase !== "connected"}
-              >
-                <RotateCcwIcon className="size-4" />
-                <span className="hidden sm:inline">Ctrl+Alt+Del</span>
-              </Button>
-              <Button variant="destructive" size="sm" onClick={handleDisconnect}>
-                <PowerIcon className="size-4" />
-                <span className="hidden sm:inline">Disconnect</span>
-              </Button>
-            </div>
-          </header>
-
+        <div className="relative flex h-svh w-full flex-col bg-background">
           <main className="relative min-h-0 flex-1 p-3">
             <div className="pointer-events-none absolute inset-0 overflow-hidden">
-              <MeshGradient
+              <GrainGradient
                 className="h-full w-full"
                 width="100%"
                 height="100%"
-                colors={gradientColors}
-                distortion={0.39}
-                swirl={0.2}
-                speed={0.5}
-                scale={0.5}
+                colors={["#7300ff", "#eba8ff", "#00bfff", "#2b00ff"]}
+                colorBack="#000000"
+                softness={0.5}
+                intensity={0.5}
+                noise={0.25}
+                shape="corners"
+                speed={1}
               />
             </div>
             <div className="relative h-full w-full">
@@ -332,6 +252,20 @@ export function VncSearch() {
             </div>
           </main>
 
+          <VncToolbar
+            targetDisplay={connection.target.display}
+            privateMode={connection.privateMode}
+            proxyCountry={connection.proxyCountry}
+            phase={phase}
+            connected={phase === "connected"}
+            timeLabel={hardLabel}
+            idleLabel={formatDuration(timer.idleRemainingMs)}
+            hardCapped={connection.hardCapMs > 0}
+            nearExpiry={timer.remainingMs !== null && timer.remainingMs < 60000}
+            onCtrlAltDel={() => viewerRef.current?.sendCtrlAltDel()}
+            onDisconnect={handleDisconnect}
+          />
+
           <VncLoginDialog
             open={loginOpen}
             fields={credentialFields}
@@ -345,11 +279,31 @@ export function VncSearch() {
   }
 
   return (
-    <div className="flex h-svh flex-col items-center justify-between overflow-hidden">
-      <div className="flex w-full min-h-0 flex-1 flex-col items-center justify-center gap-10 px-4 py-16">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <h1 className="font-coolvetica text-6xl tracking-tight sm:text-7xl md:text-8xl">VNC2Go</h1>
-          <p className="max-w-md text-sm text-muted-foreground sm:text-base">
+    <div className="relative flex h-svh flex-col items-center justify-between overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 z-0">
+        <GrainGradient
+          className="h-full w-full"
+          width="100%"
+          height="100%"
+          colors={["#ae00ff", "#00ff95", "#ffc105"]}
+          colorBack="#000a0f"
+          softness={0.7}
+          intensity={0.44}
+          noise={0.5}
+          shape="wave"
+          speed={1}
+          offsetX={0.22}
+          offsetY={0.3}
+        />
+        <div className="absolute inset-0 bg-background/30" />
+      </div>
+
+      <div className="relative z-10 flex w-full min-h-0 flex-1 flex-col items-center justify-center gap-10 px-4 py-16">
+        <div className="flex flex-col items-center gap-3 text-center mix-blend-difference">
+          <h1 className="font-coolvetica text-6xl tracking-tight text-white sm:text-7xl md:text-8xl">
+            VNC2Go
+          </h1>
+          <p className="max-w-md text-sm text-white/90 sm:text-base">
             Private. VNC. In-browser. Wait, did I mention it&apos;s private?
           </p>
         </div>
@@ -380,7 +334,7 @@ export function VncSearch() {
             </Button>
           </div>
 
-          <div className="flex items-center justify-between gap-3 rounded-xl border bg-card/50 px-4 py-3">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-input bg-card px-4 py-3 ring-1 ring-foreground/5">
             <div className="flex flex-col gap-0.5">
               <Label htmlFor="private-mode" className="flex items-center gap-1.5 text-sm font-medium">
                 <ShieldCheckIcon className="size-4" />
@@ -392,10 +346,6 @@ export function VncSearch() {
             </div>
             <Switch id="private-mode" checked={privateMode} onCheckedChange={setPrivateMode} />
           </div>
-
-          <p className="flex items-center justify-center gap-1.5 text-center text-xs text-muted-foreground">
-            Defaults to port 5900.
-          </p>
         </form>
 
         {errorMessage ? (
@@ -406,7 +356,9 @@ export function VncSearch() {
         ) : null}
       </div>
 
-      <SiteFooter />
+      <div className="relative z-10 flex w-full justify-center">
+        <SiteFooter />
+      </div>
 
       <HumanGate open={humanGateOpen} onVerified={handleVerified} />
     </div>

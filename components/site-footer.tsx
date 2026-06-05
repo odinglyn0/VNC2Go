@@ -3,7 +3,7 @@ const LEGAL_NOTICE =
 
 export function SiteFooter() {
   return (
-    <footer className="w-full max-w-xl px-1 pb-8 text-center text-[10px] leading-relaxed tracking-wide text-muted-foreground sm:text-xs">
+    <footer className="w-full max-w-xl px-1 pb-8 text-center text-[10px] leading-relaxed tracking-wide text-neutral-200 sm:text-xs">
       {LEGAL_NOTICE}
     </footer>
   )
