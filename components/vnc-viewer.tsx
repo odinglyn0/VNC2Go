@@ -161,14 +161,14 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
   }, [proxyUrl])
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-lg bg-black">
+    <div className="relative h-full w-full overflow-hidden rounded-lg bg-transparent">
       <div
         ref={containerRef}
         className="absolute inset-0 h-full w-full"
         aria-label={`VNC session for ${target.display}`}
       />
       {showLoader ? (
-        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/70">
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/40">
           <Loader inverse size="md" content={`Connecting to ${target.display}`} />
         </div>
       ) : null}

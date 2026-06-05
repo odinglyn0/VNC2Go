@@ -42,6 +42,35 @@ const VncViewer = dynamic(() => import("@/components/vnc-viewer").then((mod) => 
   ),
 })
 
+const MeshGradient = dynamic(
+  () => import("@paper-design/shaders-react").then((mod) => mod.MeshGradient),
+  { ssr: false },
+)
+
+function hslToHex(h: number, s: number, l: number): string {
+  const saturation = s / 100
+  const lightness = l / 100
+  const a = saturation * Math.min(lightness, 1 - lightness)
+  const channel = (n: number) => {
+    const k = (n + h / 30) % 12
+    const value = lightness - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))
+    return Math.round(255 * value)
+      .toString(16)
+      .padStart(2, "0")
+  }
+  return `#${channel(0)}${channel(8)}${channel(4)}`
+}
+
+function randomGradientColors(): string[] {
+  const baseHue = Math.floor(Math.random() * 360)
+  return [
+    hslToHex(baseHue % 360, 30 + Math.random() * 25, 86 + Math.random() * 8),
+    hslToHex((baseHue + 35 + Math.random() * 60) % 360, 72 + Math.random() * 24, 20 + Math.random() * 16),
+    hslToHex((baseHue + 150 + Math.random() * 60) % 360, 70 + Math.random() * 25, 52 + Math.random() * 12),
+    hslToHex((baseHue + 240 + Math.random() * 60) % 360, 62 + Math.random() * 30, 54 + Math.random() * 14),
+  ]
+}
+
 type ViewerStatus = "connecting" | "credentials" | "connected" | "closed" | "error"
 
 export function VncSearch() {
@@ -54,6 +83,12 @@ export function VncSearch() {
   const [loginOpen, setLoginOpen] = React.useState(false)
   const [humanGateOpen, setHumanGateOpen] = React.useState(false)
   const [verified, setVerified] = React.useState(false)
+  const [gradientColors, setGradientColors] = React.useState<string[]>(() => [
+    "#e0eaff",
+    "#241d9a",
+    "#f75092",
+    "#9f50d3",
+  ])
 
   const viewerRef = React.useRef<VncViewerHandle | null>(null)
   const abortRef = React.useRef<AbortController | null>(null)
@@ -86,6 +121,7 @@ export function VncSearch() {
 
       setPhase("resolving")
       setErrorMessage(null)
+      setGradientColors(randomGradientColors())
 
       try {
         const result = await resolveVncAddress(trimmed, usePrivate, controller.signal)
@@ -261,15 +297,31 @@ export function VncSearch() {
             </div>
           </header>
 
-          <main className="min-h-0 flex-1 p-3">
-            <VncViewer
-              ref={viewerRef}
-              proxyUrl={connection.proxyUrl}
-              target={connection.target}
-              onStatusChange={handleStatusChange}
-              onCredentialsRequired={handleCredentialsRequired}
-              onActivity={handleActivity}
-            />
+          <main className="relative min-h-0 flex-1 p-3">
+            <div className="pointer-events-none absolute inset-0 overflow-hidden">
+              <MeshGradient
+                className="h-full w-full"
+                width="100%"
+                height="100%"
+                colors={gradientColors}
+                distortion={0.39}
+                swirl={0.2}
+                grainMixer={0.48}
+                grainOverlay={0.61}
+                speed={0.5}
+                scale={1.08}
+              />
+            </div>
+            <div className="relative h-full w-full">
+              <VncViewer
+                ref={viewerRef}
+                proxyUrl={connection.proxyUrl}
+                target={connection.target}
+                onStatusChange={handleStatusChange}
+                onCredentialsRequired={handleCredentialsRequired}
+                onActivity={handleActivity}
+              />
+            </div>
           </main>
 
           <VncLoginDialog
