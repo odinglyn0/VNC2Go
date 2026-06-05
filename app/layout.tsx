@@ -1,4 +1,4 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Geist_Mono, Inter } from "next/font/google"
 import localFont from "next/font/local"
 
@@ -21,9 +21,57 @@ const coolvetica = localFont({
 })
 
 export const metadata: Metadata = {
-  title: "VNC2Go",
-  description: "Connect to any VNC server straight from your browser.",
+  title: {
+    default: "VNC2Go",
+    template: "%s · VNC2Go",
+  },
+  description:
+    "Connect to any VNC server straight from your browser.",
+  applicationName: "VNC2Go",
   metadataBase: new URL("https://vnc2go.odinglynn.com"),
+  alternates: { canonical: "/" },
+  keywords: [
+    "VNC",
+    "browser VNC client",
+    "noVNC",
+    "remote desktop",
+    "encrypted VNC",
+    "zero log VNC",
+    "RFB",
+  ],
+  authors: [{ name: "VNC2Go" }],
+  category: "technology",
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, "max-image-preview": "large" },
+  },
+  openGraph: {
+    type: "website",
+    siteName: "VNC2Go",
+    title: "VNC2Go — Browser VNC client, end-to-end encrypted, zero logs",
+    description:
+      "Connect to any VNC server straight from your browser.",
+    url: "https://vnc2go.odinglynn.com",
+    locale: "en_IE",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "VNC2Go — Browser VNC client",
+    description:
+      "Connect to any VNC server straight from your browser.",
+  },
+  icons: {
+    icon: "/favicon.ico",
+  },
+}
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+  ],
+  colorScheme: "dark light",
 }
 
 export default function RootLayout({

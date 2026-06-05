@@ -1,5 +1,6 @@
 export type ConnectionPhase =
   | "idle"
+  | "verifying"
   | "resolving"
   | "connecting"
   | "credentials"
@@ -15,7 +16,12 @@ export interface ResolvedTarget {
 
 export interface ResolveResponse {
   proxyUrl: string
+  sessionId: string
   target: ResolvedTarget
+  privateMode: boolean
+  proxyCountry: string | null
+  hardCapMs: number
+  idleCapMs: number
   expiresInMs: number
 }
 
@@ -31,11 +37,47 @@ export interface VncCredentials {
   target?: string
 }
 
-export async function resolveVncAddress(address: string, signal?: AbortSignal): Promise<ResolveResponse> {
+let cachedCsrfToken: string | null = null
+
+export async function getCsrfToken(forceRefresh = false): Promise<string> {
+  if (cachedCsrfToken && !forceRefresh) {
+    return cachedCsrfToken
+  }
+  const response = await fetch("/api/csrf", { method: "GET", credentials: "same-origin" })
+  if (!response.ok) {
+    throw new Error("Unable to establish a secure session")
+  }
+  const data = (await response.json()) as { csrfToken: string }
+  cachedCsrfToken = data.csrfToken
+  return data.csrfToken
+}
+
+export async function submitHumanVerification(captchaToken: string): Promise<void> {
+  const csrf = await getCsrfToken()
+  const response = await fetch("/api/verify", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-vnc2go-csrf": csrf },
+    credentials: "same-origin",
+    body: JSON.stringify({ captchaToken }),
+  })
+
+  const data = (await response.json()) as { verified?: boolean; error?: string }
+  if (!response.ok || !data.verified) {
+    throw new Error(data.error ?? "Human verification failed")
+  }
+}
+
+export async function resolveVncAddress(
+  address: string,
+  privateMode: boolean,
+  signal?: AbortSignal,
+): Promise<ResolveResponse> {
+  const csrf = await getCsrfToken()
   const response = await fetch("/api/resolve", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ address }),
+    headers: { "content-type": "application/json", "x-vnc2go-csrf": csrf },
+    credentials: "same-origin",
+    body: JSON.stringify({ address, privateMode }),
     signal,
   })
 

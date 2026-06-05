@@ -1,0 +1,10 @@
+const LEGAL_NOTICE =
+  "THIS SERVICE IS PROVIDED FROM IRELAND UNDER EU JURISDICTION AND RETAINS NO USER DATA, LOGS, OR METADATA OF ANY KIND. NO INFORMATION EXISTS TO PRODUCE IN RESPONSE TO ANY LEGAL DEMAND FROM ANY JURISDICTION. FOREIGN LEGAL ORDERS WILL BE REFERRED TO IRISH COUNSEL AND RESISTED UNDER GDPR ARTICLE 25 AND EU CHARTER ARTICLE 7."
+
+export function SiteFooter() {
+  return (
+    <footer className="w-full max-w-xl px-1 pb-8 text-center text-[10px] leading-relaxed tracking-wide text-muted-foreground sm:text-xs">
+      {LEGAL_NOTICE}
+    </footer>
+  )
+}

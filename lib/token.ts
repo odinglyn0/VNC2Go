@@ -1,82 +1,80 @@
-export interface VncTokenPayload {
+import { SignJWT, jwtVerify } from "jose"
+
+export interface VncTokenClaims {
   host: string
   port: number
-  exp: number
+  sid: string
+  nonce: string
+  privateMode: boolean
+  proxyCountry?: string
+  hardCapMs: number
+  idleCapMs: number
 }
 
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = ""
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte)
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+const ISSUER = "vnc2go.odinglynn.com"
+const AUDIENCE = "vnc2go-proxy"
+const ALG = "HS256"
+
+function secretToKey(secret: string): Uint8Array {
+  return new TextEncoder().encode(secret)
 }
 
-function base64UrlDecode(value: string): Uint8Array {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/")
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")
-  const binary = atob(padded)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
+export async function signVncToken(
+  claims: VncTokenClaims,
+  secret: string,
+  ttlSeconds: number,
+): Promise<string> {
+  const key = secretToKey(secret)
+  return new SignJWT({
+    host: claims.host,
+    port: claims.port,
+    nonce: claims.nonce,
+    privateMode: claims.privateMode,
+    proxyCountry: claims.proxyCountry,
+    hardCapMs: claims.hardCapMs,
+    idleCapMs: claims.idleCapMs,
+  })
+    .setProtectedHeader({ alg: ALG, typ: "JWT" })
+    .setSubject(claims.sid)
+    .setIssuer(ISSUER)
+    .setAudience(AUDIENCE)
+    .setIssuedAt()
+    .setExpirationTime(`${ttlSeconds}s`)
+    .setJti(claims.nonce)
+    .sign(key)
 }
 
-async function importKey(secret: string): Promise<CryptoKey> {
-  const encoder = new TextEncoder()
-  return crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  )
-}
-
-function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) {
-    return false
-  }
-  let result = 0
-  for (let i = 0; i < a.length; i += 1) {
-    result |= a[i] ^ b[i]
-  }
-  return result === 0
-}
-
-export async function signVncToken(payload: VncTokenPayload, secret: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const body = base64UrlEncode(encoder.encode(JSON.stringify(payload)))
-  const key = await importKey(secret)
-  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(body))
-  const sig = base64UrlEncode(new Uint8Array(signature))
-  return `${body}.${sig}`
-}
-
-export async function verifyVncToken(token: string, secret: string): Promise<VncTokenPayload | null> {
-  const parts = token.split(".")
-  if (parts.length !== 2) {
-    return null
-  }
-  const [body, providedSig] = parts
-  const encoder = new TextEncoder()
-  const key = await importKey(secret)
-  const expectedSignature = await crypto.subtle.sign("HMAC", key, encoder.encode(body))
-  const expected = new Uint8Array(expectedSignature)
-  const provided = base64UrlDecode(providedSig)
-  if (!timingSafeEqual(expected, provided)) {
-    return null
-  }
+export async function verifyVncToken(token: string, secret: string): Promise<VncTokenClaims | null> {
   try {
-    const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(body))) as VncTokenPayload
-    if (typeof payload.host !== "string" || typeof payload.port !== "number" || typeof payload.exp !== "number") {
+    const key = secretToKey(secret)
+    const { payload } = await jwtVerify(token, key, {
+      issuer: ISSUER,
+      audience: AUDIENCE,
+      algorithms: [ALG],
+    })
+
+    if (
+      typeof payload.host !== "string" ||
+      typeof payload.port !== "number" ||
+      typeof payload.sub !== "string" ||
+      typeof payload.nonce !== "string" ||
+      typeof payload.privateMode !== "boolean" ||
+      typeof payload.hardCapMs !== "number" ||
+      typeof payload.idleCapMs !== "number"
+    ) {
       return null
     }
-    if (Date.now() > payload.exp) {
-      return null
+
+    return {
+      host: payload.host,
+      port: payload.port,
+      sid: payload.sub,
+      nonce: payload.nonce,
+      privateMode: payload.privateMode,
+      proxyCountry: typeof payload.proxyCountry === "string" ? payload.proxyCountry : undefined,
+      hardCapMs: payload.hardCapMs,
+      idleCapMs: payload.idleCapMs,
     }
-    return payload
   } catch {
     return null
   }
