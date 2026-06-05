@@ -233,6 +233,16 @@ export function VncSearch() {
     lastActivityRef.current = performance.now()
   }, [])
 
+  const handleDisconnect = React.useCallback(() => {
+    abortRef.current?.abort()
+    try {
+      viewerRef.current?.disconnect()
+    } catch {
+      void 0
+    }
+    window.location.reload()
+  }, [])
+
   const isBusy = phase === "resolving"
   const showViewer =
     connection !== null && (phase === "connecting" || phase === "credentials" || phase === "connected")
@@ -290,7 +300,7 @@ export function VncSearch() {
                 <RotateCcwIcon className="size-4" />
                 <span className="hidden sm:inline">Ctrl+Alt+Del</span>
               </Button>
-              <Button variant="destructive" size="sm" onClick={resetToSearch}>
+              <Button variant="destructive" size="sm" onClick={handleDisconnect}>
                 <PowerIcon className="size-4" />
                 <span className="hidden sm:inline">Disconnect</span>
               </Button>
