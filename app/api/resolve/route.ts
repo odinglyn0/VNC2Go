@@ -10,6 +10,7 @@ import {
   parseCookies,
   randomId,
   verifyHumanPass,
+  withSafeErrors,
 } from "@/lib/security"
 import { signVncToken } from "@/lib/token"
 import { formatTarget, isPrivateOrReservedTarget, parseVncAddress } from "@/lib/vnc"
@@ -34,7 +35,11 @@ function allowPrivateTargets(): boolean {
   return process.env.VNC_ALLOW_PRIVATE_TARGETS === "true"
 }
 
-export async function POST(request: Request): Promise<Response> {
+export function POST(request: Request): Promise<Response> {
+  return withSafeErrors(() => handleResolve(request))
+}
+
+async function handleResolve(request: Request): Promise<Response> {
   const fingerprint = await clientFingerprint(request)
   const limit = checkRateLimit(`resolve:${fingerprint}`, RATE_LIMITS.resolve.limit, RATE_LIMITS.resolve.windowMs)
   if (!limit.allowed) {

@@ -42,6 +42,7 @@ const contentSecurityPolicy = [
   .trim()
 
 const nextConfig: NextConfig = {
+  poweredByHeader: false,
   async headers() {
     return [
       {

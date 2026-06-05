@@ -1,6 +1,13 @@
 import { connect } from "cloudflare:sockets"
 
-import { deriveIteSession, encryptFrame, decryptFrame, generateHandshakeKeys, importPeerPublicKey, type IteSession } from "./ite-crypto"
+import {
+  deriveIteSession,
+  encryptFrame,
+  decryptFrame,
+  generateHandshakeKeys,
+  importPeerPublicKey,
+  type IteSession,
+} from "./ite-crypto"
 import {
   ControlOp,
   FrameType,
@@ -25,6 +32,7 @@ export interface Env {
 
 const MAX_PORT = 65535
 const MAX_FRAME_BYTES = 4 * 1024 * 1024
+const HANDSHAKE_TIMEOUT_MS = 10_000
 
 function parseAllowedOrigins(raw: string): string[] {
   return raw
@@ -89,7 +97,260 @@ async function openRemote(claims: VncTokenClaims, env: Env): Promise<RemoteConne
   }
 }
 
-async function handleConnect(request: Request, env: Env): Promise<Response> {
+async function sendControl(ws: WebSocket, ite: IteSession, op: number, reason?: string): Promise<void> {
+  try {
+    const frame = encodeApplicationFrame(FrameType.Control, encodeControl({ op, reason }))
+    const encrypted = await encryptFrame(ite, frame)
+    ws.send(encrypted)
+  } catch {
+    void 0
+  }
+}
+
+class FrameQueue {
+  private items: Uint8Array[] = []
+  private waiter: ((value: Uint8Array | null) => void) | null = null
+  private done = false
+
+  push(item: Uint8Array): void {
+    if (this.waiter) {
+      const resolve = this.waiter
+      this.waiter = null
+      resolve(item)
+    } else {
+      this.items.push(item)
+    }
+  }
+
+  close(): void {
+    this.done = true
+    if (this.waiter) {
+      const resolve = this.waiter
+      this.waiter = null
+      resolve(null)
+    }
+  }
+
+  next(): Promise<Uint8Array | null> {
+    const queued = this.items.shift()
+    if (queued) {
+      return Promise.resolve(queued)
+    }
+    if (this.done) {
+      return Promise.resolve(null)
+    }
+    return new Promise((resolve) => {
+      this.waiter = resolve
+    })
+  }
+}
+
+async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Promise<void> {
+  const clientFrames = new FrameQueue()
+  let phase: "handshake" | "bridging" | "closed" = "handshake"
+  let ite: IteSession | null = null
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+  let hardTimer: ReturnType<typeof setTimeout> | null = null
+  let handshakeTimer: ReturnType<typeof setTimeout> | null = null
+
+  let remote: RemoteConnection
+  try {
+    remote = await openRemote(claims, env)
+  } catch {
+    try {
+      ws.close(1011, "remote unreachable")
+    } catch {
+      void 0
+    }
+    return
+  }
+
+  const writer = remote.writable.getWriter()
+  const reader = remote.readable.getReader()
+  let closed = false
+
+  const cleanup = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+      idleTimer = null
+    }
+    if (hardTimer) {
+      clearTimeout(hardTimer)
+      hardTimer = null
+    }
+    if (handshakeTimer) {
+      clearTimeout(handshakeTimer)
+      handshakeTimer = null
+    }
+  }
+
+  const shutdown = async (op: number | null, reason: string, wsCode: number) => {
+    if (closed) {
+      return
+    }
+    closed = true
+    phase = "closed"
+    cleanup()
+    if (op !== null && ite) {
+      await sendControl(ws, ite, op, reason)
+    }
+    clientFrames.close()
+    try {
+      await reader.cancel()
+    } catch {
+      void 0
+    }
+    try {
+      await writer.close()
+    } catch {
+      void 0
+    }
+    remote.close()
+    try {
+      ws.close(wsCode, reason)
+    } catch {
+      void 0
+    }
+  }
+
+  const armIdle = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+    }
+    idleTimer = setTimeout(() => {
+      void shutdown(ControlOp.IdleTimeout, "Disconnected after 3 minutes of inactivity", 1000)
+    }, claims.idleCapMs)
+  }
+
+  const scheduleHardCap = () => {
+    if (claims.hardCapMs <= 0) {
+      return
+    }
+    const deadline = Date.now() + claims.hardCapMs
+    const tick = () => {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) {
+        void shutdown(ControlOp.HardTimeout, "Private session reached its 10 minute limit", 1000)
+        return
+      }
+      hardTimer = setTimeout(tick, Math.min(remaining, 30_000))
+    }
+    tick()
+  }
+
+  ws.addEventListener("message", (event) => {
+    if (closed || typeof event.data === "string") {
+      return
+    }
+    const data = new Uint8Array(event.data as ArrayBuffer)
+    if (data.byteLength === 0) {
+      return
+    }
+    if (data.byteLength > MAX_FRAME_BYTES) {
+      void shutdown(ControlOp.Disconnect, "Frame too large", 1009)
+      return
+    }
+    clientFrames.push(data)
+  })
+
+  ws.addEventListener("close", () => {
+    void shutdown(null, "client closed", 1000)
+  })
+
+  ws.addEventListener("error", () => {
+    void shutdown(null, "socket error", 1011)
+  })
+
+  const pumpRemote = async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done || phase === "closed") {
+          break
+        }
+        if (value && value.byteLength > 0 && ite && phase === "bridging") {
+          armIdle()
+          const frame = encodeApplicationFrame(FrameType.Data, value)
+          const encrypted = await encryptFrame(ite, frame)
+          ws.send(encrypted)
+        }
+      }
+      await shutdown(ControlOp.Disconnect, "The VNC server closed the connection", 1000)
+    } catch {
+      await shutdown(ControlOp.Disconnect, "The connection was lost", 1011)
+    }
+  }
+
+  remote.closed
+    .then(() => shutdown(ControlOp.Disconnect, "The VNC server closed the connection", 1000))
+    .catch(() => shutdown(ControlOp.Disconnect, "The connection was lost", 1011))
+
+  void pumpRemote()
+
+  const keys = await generateHandshakeKeys()
+  if (closed) {
+    return
+  }
+  ws.send(buildHandshakeFrame(FrameType.ServerHello, ITE_PROTOCOL_VERSION, keys.publicKeyRaw))
+
+  handshakeTimer = setTimeout(() => {
+    void shutdown(null, "handshake timeout", 1002)
+  }, HANDSHAKE_TIMEOUT_MS)
+
+  const clientHelloBytes = await clientFrames.next()
+  if (handshakeTimer) {
+    clearTimeout(handshakeTimer)
+    handshakeTimer = null
+  }
+  if (!clientHelloBytes || closed) {
+    return
+  }
+
+  const hello = parseHandshakeFrame(clientHelloBytes)
+  if (!hello || hello.type !== FrameType.ClientHello || hello.version !== ITE_PROTOCOL_VERSION) {
+    await shutdown(null, "bad handshake", 1002)
+    return
+  }
+
+  try {
+    const peerKey = await importPeerPublicKey(hello.publicKey)
+    ite = await deriveIteSession(keys.privateKey, peerKey)
+  } catch {
+    await shutdown(null, "handshake failed", 1011)
+    return
+  }
+
+  ws.send(buildHandshakeFrame(FrameType.Ready, ITE_PROTOCOL_VERSION, new Uint8Array(0)))
+  phase = "bridging"
+  armIdle()
+  scheduleHardCap()
+
+  for (;;) {
+    const encrypted = await clientFrames.next()
+    if (encrypted === null || closed) {
+      break
+    }
+    let plaintext: Uint8Array
+    try {
+      plaintext = await decryptFrame(ite, encrypted)
+    } catch {
+      await shutdown(ControlOp.Disconnect, "Decryption failed", 1002)
+      return
+    }
+    armIdle()
+    const { kind, payload } = decodeApplicationFrame(plaintext)
+    if (kind === FrameType.Data) {
+      try {
+        await writer.write(payload)
+      } catch {
+        await shutdown(ControlOp.Disconnect, "Write to VNC server failed", 1011)
+        return
+      }
+    }
+  }
+}
+
+async function handleConnect(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
     return badRequest("Expected a WebSocket upgrade", 426)
   }
@@ -122,274 +383,26 @@ async function handleConnect(request: Request, env: Env): Promise<Response> {
   const server = pair[1]
   server.accept()
 
-  runSession(server, claims, env).catch(() => {
-    try {
-      server.close(1011, "session error")
-    } catch {
-      void 0
-    }
-  })
+  ctx.waitUntil(
+    runSession(server, claims, env).catch(() => {
+      try {
+        server.close(1011, "session error")
+      } catch {
+        void 0
+      }
+    }),
+  )
 
   return new Response(null, { status: 101, webSocket: client })
 }
 
-async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Promise<void> {
-  const incoming: Uint8Array[] = []
-  let resolveNext: ((value: Uint8Array) => void) | null = null
-  let sessionClosed = false
-
-  const onMessage = (event: MessageEvent) => {
-    if (typeof event.data === "string") {
-      return
-    }
-    const bytes = new Uint8Array(event.data as ArrayBuffer)
-    if (resolveNext) {
-      const resolver = resolveNext
-      resolveNext = null
-      resolver(bytes)
-    } else {
-      incoming.push(bytes)
-    }
-  }
-
-  const onClose = () => {
-    sessionClosed = true
-    if (resolveNext) {
-      const resolver = resolveNext
-      resolveNext = null
-      resolver(new Uint8Array(0))
-    }
-  }
-
-  ws.addEventListener("message", onMessage as EventListener)
-  ws.addEventListener("close", onClose as EventListener)
-
-  const nextMessage = (timeoutMs: number): Promise<Uint8Array> => {
-    const queued = incoming.shift()
-    if (queued) {
-      return Promise.resolve(queued)
-    }
-    if (sessionClosed) {
-      return Promise.resolve(new Uint8Array(0))
-    }
-    return new Promise<Uint8Array>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        resolveNext = null
-        reject(new Error("handshake timeout"))
-      }, timeoutMs)
-      resolveNext = (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      }
-    })
-  }
-
-  const handshakeKeys = await generateHandshakeKeys()
-  ws.send(buildHandshakeFrame(FrameType.ServerHello, ITE_PROTOCOL_VERSION, handshakeKeys.publicKeyRaw))
-
-  const clientHelloBytes = await nextMessage(10_000)
-  const clientHello = parseHandshakeFrame(clientHelloBytes)
-  if (!clientHello || clientHello.type !== FrameType.ClientHello || clientHello.version !== ITE_PROTOCOL_VERSION) {
-    ws.removeEventListener("message", onMessage as EventListener)
-    ws.removeEventListener("close", onClose as EventListener)
-    ws.close(1002, "bad handshake")
-    return
-  }
-
-  const peerKey = await importPeerPublicKey(clientHello.publicKey)
-  const ite = await deriveIteSession(handshakeKeys.privateKey, peerKey)
-
-  ws.send(buildHandshakeFrame(FrameType.Ready, ITE_PROTOCOL_VERSION, new Uint8Array(0)))
-
-  ws.removeEventListener("message", onMessage as EventListener)
-  ws.removeEventListener("close", onClose as EventListener)
-
-  let remote: RemoteConnection
-  try {
-    remote = await openRemote(claims, env)
-  } catch {
-    await sendControl(ws, ite, ControlOp.Disconnect, "Unable to reach the VNC server")
-    ws.close(1011, "remote unreachable")
-    return
-  }
-
-  const pendingFrames = incoming.slice()
-  await bridgeEncrypted(ws, ite, remote, claims, pendingFrames)
-}
-
-async function sendControl(ws: WebSocket, ite: IteSession, op: number, reason?: string): Promise<void> {
-  try {
-    const frame = encodeApplicationFrame(FrameType.Control, encodeControl({ op, reason }))
-    const encrypted = await encryptFrame(ite, frame)
-    ws.send(encrypted)
-  } catch {
-    void 0
-  }
-}
-
-async function bridgeEncrypted(
-  ws: WebSocket,
-  ite: IteSession,
-  remote: RemoteConnection,
-  claims: VncTokenClaims,
-  pendingFrames: Uint8Array[],
-): Promise<void> {
-  const writer = remote.writable.getWriter()
-  const reader = remote.readable.getReader()
-
-  let closed = false
-  let idleTimer: ReturnType<typeof setTimeout> | null = null
-  let hardTimer: ReturnType<typeof setTimeout> | null = null
-  const startedAt = Date.now()
-
-  const clearTimers = () => {
-    if (idleTimer) {
-      clearTimeout(idleTimer)
-      idleTimer = null
-    }
-    if (hardTimer) {
-      clearTimeout(hardTimer)
-      hardTimer = null
-    }
-  }
-
-  const shutdown = async (op: number | null, reason: string, wsCode: number) => {
-    if (closed) {
-      return
-    }
-    closed = true
-    clearTimers()
-    if (op !== null) {
-      await sendControl(ws, ite, op, reason)
-    }
-    try {
-      await reader.cancel()
-    } catch {
-      void 0
-    }
-    try {
-      await writer.close()
-    } catch {
-      void 0
-    }
-    remote.close()
-    try {
-      ws.close(wsCode, reason)
-    } catch {
-      void 0
-    }
-  }
-
-  const armIdle = () => {
-    if (idleTimer) {
-      clearTimeout(idleTimer)
-    }
-    idleTimer = setTimeout(() => {
-      void shutdown(ControlOp.IdleTimeout, "Disconnected after 3 minutes of inactivity", 1000)
-    }, claims.idleCapMs)
-  }
-
-  if (claims.hardCapMs > 0) {
-    const deadline = startedAt + claims.hardCapMs
-    const scheduleHard = () => {
-      const remaining = deadline - Date.now()
-      if (remaining <= 0) {
-        void shutdown(ControlOp.HardTimeout, "Private session reached its 10 minute limit", 1000)
-        return
-      }
-      hardTimer = setTimeout(scheduleHard, Math.min(remaining, 30_000))
-    }
-    scheduleHard()
-  }
-
-  armIdle()
-
-  const handleClientFrame = async (encrypted: Uint8Array) => {
-    let plaintext: Uint8Array
-    try {
-      plaintext = await decryptFrame(ite, encrypted)
-    } catch {
-      await shutdown(ControlOp.Disconnect, "Decryption failed", 1002)
-      return
-    }
-
-    armIdle()
-
-    const { kind, payload } = decodeApplicationFrame(plaintext)
-    if (kind === FrameType.Control) {
-      return
-    }
-    if (kind !== FrameType.Data) {
-      return
-    }
-
-    try {
-      await writer.write(payload)
-    } catch {
-      await shutdown(ControlOp.Disconnect, "Write to VNC server failed", 1011)
-    }
-  }
-
-  ws.addEventListener("message", (event) => {
-    if (closed || typeof event.data === "string") {
-      return
-    }
-    const data = new Uint8Array(event.data as ArrayBuffer)
-    if (data.byteLength > MAX_FRAME_BYTES) {
-      void shutdown(ControlOp.Disconnect, "Frame too large", 1009)
-      return
-    }
-    void handleClientFrame(data)
-  })
-
-  ws.addEventListener("close", () => {
-    void shutdown(null, "client closed", 1000)
-  })
-
-  ws.addEventListener("error", () => {
-    void shutdown(null, "socket error", 1011)
-  })
-
-  for (const frame of pendingFrames) {
-    if (closed) {
-      break
-    }
-    await handleClientFrame(frame)
-  }
-
-  remote.closed
-    .then(() => shutdown(ControlOp.Disconnect, "The VNC server closed the connection", 1000))
-    .catch(() => shutdown(ControlOp.Disconnect, "The connection was lost", 1011))
-
-  try {
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (done) {
-        break
-      }
-      if (closed) {
-        break
-      }
-      if (value && value.byteLength > 0) {
-        armIdle()
-        const frame = encodeApplicationFrame(FrameType.Data, value)
-        const encrypted = await encryptFrame(ite, frame)
-        ws.send(encrypted)
-      }
-    }
-    await shutdown(ControlOp.Disconnect, "The VNC server closed the connection", 1000)
-  } catch {
-    await shutdown(ControlOp.Disconnect, "The connection was lost", 1011)
-  }
-}
-
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
       const url = new URL(request.url)
 
       if (request.method === "GET" && url.pathname === "/connect") {
-        return await handleConnect(request, env)
+        return await handleConnect(request, env, ctx)
       }
 
       if (request.method === "GET" && url.pathname === "/health") {

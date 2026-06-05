@@ -44,9 +44,11 @@ async function deriveFingerprint(keyBytes: Uint8Array): Promise<string> {
 }
 
 export async function deriveIteSession(privateKey: CryptoKey, peerPublicKey: CryptoKey): Promise<IteSession> {
-  const sharedBits = new Uint8Array(
-    await crypto.subtle.deriveBits({ name: "ECDH", $public: peerPublicKey }, privateKey, KEY_BITS),
-  )
+  const ecdhParams = { name: "ECDH", public: peerPublicKey, $public: peerPublicKey } as unknown as {
+    name: string
+    $public?: CryptoKey
+  }
+  const sharedBits = new Uint8Array(await crypto.subtle.deriveBits(ecdhParams, privateKey, KEY_BITS))
 
   const hkdfKey = await crypto.subtle.importKey("raw", sharedBits, "HKDF", false, ["deriveKey"])
   const encoder = new TextEncoder()

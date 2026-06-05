@@ -11,6 +11,7 @@ import {
   constantTimeEqual,
   issueHumanPass,
   parseCookies,
+  withSafeErrors,
 } from "@/lib/security"
 
 export const runtime = "nodejs"
@@ -32,7 +33,11 @@ function clientIp(request: Request): string | undefined {
   return request.headers.get("x-real-ip") ?? undefined
 }
 
-export async function POST(request: Request): Promise<Response> {
+export function POST(request: Request): Promise<Response> {
+  return withSafeErrors(() => handleVerify(request))
+}
+
+async function handleVerify(request: Request): Promise<Response> {
   const fingerprint = await clientFingerprint(request)
   const limit = checkRateLimit(`verify:${fingerprint}`, RATE_LIMITS.verify.limit, RATE_LIMITS.verify.windowMs)
   if (!limit.allowed) {

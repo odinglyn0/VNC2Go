@@ -85,6 +85,9 @@ export class IteChannel {
       return
     }
     const data = new Uint8Array(event.data as ArrayBuffer)
+    if (data.byteLength === 0) {
+      return
+    }
 
     if (!this.handshakeComplete) {
       await this.handleHandshakeFrame(data)
