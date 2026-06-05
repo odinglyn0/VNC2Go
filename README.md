@@ -6,6 +6,7 @@ As the name suggests, this:
 - Dosen't keep logs
 - Dosen't require an account
 - Dosen't fingerprint your browser
+- Is littered with ReactJS and ShadCN/ui
 
 It does however:
 
