@@ -5,7 +5,6 @@ import dynamic from "next/dynamic"
 import {
   ArrowRightIcon,
   ClockIcon,
-  KeyRoundIcon,
   MonitorIcon,
   PowerIcon,
   RotateCcwIcon,
@@ -55,7 +54,6 @@ export function VncSearch() {
   const [loginOpen, setLoginOpen] = React.useState(false)
   const [humanGateOpen, setHumanGateOpen] = React.useState(false)
   const [verified, setVerified] = React.useState(false)
-  const [iteKey, setIteKey] = React.useState<string | null>(null)
 
   const viewerRef = React.useRef<VncViewerHandle | null>(null)
   const abortRef = React.useRef<AbortController | null>(null)
@@ -76,7 +74,6 @@ export function VncSearch() {
     setConnection(null)
     setCredentialFields([])
     setLoginOpen(false)
-    setIteKey(null)
     setPhase("idle")
     setErrorMessage(null)
   }, [])
@@ -164,7 +161,6 @@ export function VncSearch() {
         setPhase("idle")
         setConnection(null)
         setLoginOpen(false)
-        setIteKey(null)
         if (detail) {
           toast.message(detail)
         }
@@ -201,10 +197,6 @@ export function VncSearch() {
     lastActivityRef.current = performance.now()
   }, [])
 
-  const handleIteKey = React.useCallback((fingerprint: string) => {
-    setIteKey(fingerprint)
-  }, [])
-
   const isBusy = phase === "resolving"
   const showViewer =
     connection !== null && (phase === "connecting" || phase === "credentials" || phase === "connected")
@@ -234,23 +226,6 @@ export function VncSearch() {
             </div>
 
             <div className="flex items-center gap-2">
-              {iteKey ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Badge variant="outline" className="hidden gap-1 font-mono sm:flex">
-                      <KeyRoundIcon className="size-3" />
-                      {iteKey.slice(0, 9)}…
-                    </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <div className="flex flex-col gap-1">
-                      <span className="font-medium">ITEKey</span>
-                      <span className="font-mono text-[10px] break-all">{iteKey}</span>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
-
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Badge
@@ -293,7 +268,6 @@ export function VncSearch() {
               target={connection.target}
               onStatusChange={handleStatusChange}
               onCredentialsRequired={handleCredentialsRequired}
-              onIteKey={handleIteKey}
               onActivity={handleActivity}
             />
           </main>
