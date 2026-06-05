@@ -290,7 +290,7 @@ export function VncSearch() {
         <div className="flex flex-col items-center gap-3 text-center">
           <h1 className="font-coolvetica text-6xl tracking-tight sm:text-7xl md:text-8xl">VNC2Go</h1>
           <p className="max-w-md text-sm text-muted-foreground sm:text-base">
-            Private. VNC. In-browser. Wait, did I mention it's private?
+            Private. VNC. In-browser. Wait, did I mention it&apos;s private?
           </p>
         </div>
 

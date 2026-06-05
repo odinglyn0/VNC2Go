@@ -162,7 +162,9 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
       return
     }
     armIdle()
-    writer.write(data).catch(() => shutdown("Write to VNC server failed", 1011))
+    const copy = new Uint8Array(data.byteLength)
+    copy.set(data)
+    writer.write(copy).catch(() => shutdown("Write to VNC server failed", 1011))
   })
 
   ws.addEventListener("close", () => {
@@ -188,7 +190,9 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
       }
       if (value && value.byteLength > 0) {
         armIdle()
-        ws.send(value)
+        const copy = new Uint8Array(value.byteLength)
+        copy.set(value)
+        ws.send(copy)
       }
     }
     shutdown("The VNC server closed the connection", 1000)
@@ -228,6 +232,7 @@ async function handleConnect(request: Request, env: Env, ctx: ExecutionContext):
   const pair = new WebSocketPair()
   const client = pair[0]
   const server = pair[1]
+  server.binaryType = "arraybuffer"
   server.accept()
 
   ctx.waitUntil(

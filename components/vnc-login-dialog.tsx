@@ -38,12 +38,13 @@ const FIELD_PLACEHOLDERS: Record<CredentialField, string> = {
 
 export function VncLoginDialog({ open, fields, target, onSubmit, onCancel }: VncLoginDialogProps) {
   const [values, setValues] = React.useState<VncCredentials>({})
+  const resetKey = open ? fields.join("|") : null
+  const [prevResetKey, setPrevResetKey] = React.useState<string | null>(resetKey)
 
-  React.useEffect(() => {
-    if (open) {
-      setValues({})
-    }
-  }, [open, fields])
+  if (resetKey !== prevResetKey) {
+    setPrevResetKey(resetKey)
+    setValues({})
+  }
 
   const activeFields = fields.length > 0 ? fields : (["password"] as CredentialField[])
 
