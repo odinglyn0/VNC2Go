@@ -345,8 +345,8 @@ export function VncSearch() {
   }
 
   return (
-    <div className="flex min-h-svh flex-col items-center justify-between">
-      <div className="flex w-full flex-1 flex-col items-center justify-center gap-10 px-4 py-16">
+    <div className="flex h-svh flex-col items-center justify-between overflow-hidden">
+      <div className="flex w-full min-h-0 flex-1 flex-col items-center justify-center gap-10 px-4 py-16">
         <div className="flex flex-col items-center gap-3 text-center">
           <h1 className="font-coolvetica text-6xl tracking-tight sm:text-7xl md:text-8xl">VNC2Go</h1>
           <p className="max-w-md text-sm text-muted-foreground sm:text-base">
