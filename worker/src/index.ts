@@ -133,45 +133,65 @@ async function handleConnect(request: Request, env: Env): Promise<Response> {
   return new Response(null, { status: 101, webSocket: client })
 }
 
-function waitForBinaryMessage(ws: WebSocket, timeoutMs: number): Promise<Uint8Array> {
-  return new Promise<Uint8Array>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup()
-      reject(new Error("handshake timeout"))
-    }, timeoutMs)
-
-    const onMessage = (event: MessageEvent) => {
-      if (typeof event.data === "string") {
-        return
-      }
-      cleanup()
-      resolve(new Uint8Array(event.data as ArrayBuffer))
-    }
-
-    const onClose = () => {
-      cleanup()
-      reject(new Error("closed during handshake"))
-    }
-
-    const cleanup = () => {
-      clearTimeout(timer)
-      ws.removeEventListener("message", onMessage as EventListener)
-      ws.removeEventListener("close", onClose as EventListener)
-    }
-
-    ws.addEventListener("message", onMessage as EventListener)
-    ws.addEventListener("close", onClose as EventListener)
-  })
-}
-
 async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Promise<void> {
-  const handshakeKeys = await generateHandshakeKeys()
+  const incoming: Uint8Array[] = []
+  let resolveNext: ((value: Uint8Array) => void) | null = null
+  let sessionClosed = false
 
+  const onMessage = (event: MessageEvent) => {
+    if (typeof event.data === "string") {
+      return
+    }
+    const bytes = new Uint8Array(event.data as ArrayBuffer)
+    if (resolveNext) {
+      const resolver = resolveNext
+      resolveNext = null
+      resolver(bytes)
+    } else {
+      incoming.push(bytes)
+    }
+  }
+
+  const onClose = () => {
+    sessionClosed = true
+    if (resolveNext) {
+      const resolver = resolveNext
+      resolveNext = null
+      resolver(new Uint8Array(0))
+    }
+  }
+
+  ws.addEventListener("message", onMessage as EventListener)
+  ws.addEventListener("close", onClose as EventListener)
+
+  const nextMessage = (timeoutMs: number): Promise<Uint8Array> => {
+    const queued = incoming.shift()
+    if (queued) {
+      return Promise.resolve(queued)
+    }
+    if (sessionClosed) {
+      return Promise.resolve(new Uint8Array(0))
+    }
+    return new Promise<Uint8Array>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        resolveNext = null
+        reject(new Error("handshake timeout"))
+      }, timeoutMs)
+      resolveNext = (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      }
+    })
+  }
+
+  const handshakeKeys = await generateHandshakeKeys()
   ws.send(buildHandshakeFrame(FrameType.ServerHello, ITE_PROTOCOL_VERSION, handshakeKeys.publicKeyRaw))
 
-  const clientHelloBytes = await waitForBinaryMessage(ws, 10_000)
+  const clientHelloBytes = await nextMessage(10_000)
   const clientHello = parseHandshakeFrame(clientHelloBytes)
   if (!clientHello || clientHello.type !== FrameType.ClientHello || clientHello.version !== ITE_PROTOCOL_VERSION) {
+    ws.removeEventListener("message", onMessage as EventListener)
+    ws.removeEventListener("close", onClose as EventListener)
     ws.close(1002, "bad handshake")
     return
   }
@@ -180,6 +200,9 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
   const ite = await deriveIteSession(handshakeKeys.privateKey, peerKey)
 
   ws.send(buildHandshakeFrame(FrameType.Ready, ITE_PROTOCOL_VERSION, new Uint8Array(0)))
+
+  ws.removeEventListener("message", onMessage as EventListener)
+  ws.removeEventListener("close", onClose as EventListener)
 
   let remote: RemoteConnection
   try {
@@ -190,7 +213,8 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
     return
   }
 
-  await bridgeEncrypted(ws, ite, remote, claims)
+  const pendingFrames = incoming.slice()
+  await bridgeEncrypted(ws, ite, remote, claims, pendingFrames)
 }
 
 async function sendControl(ws: WebSocket, ite: IteSession, op: number, reason?: string): Promise<void> {
@@ -208,6 +232,7 @@ async function bridgeEncrypted(
   ite: IteSession,
   remote: RemoteConnection,
   claims: VncTokenClaims,
+  pendingFrames: Uint8Array[],
 ): Promise<void> {
   const writer = remote.writable.getWriter()
   const reader = remote.readable.getReader()
@@ -279,26 +304,6 @@ async function bridgeEncrypted(
 
   armIdle()
 
-  ws.addEventListener("message", (event) => {
-    if (closed || typeof event.data === "string") {
-      return
-    }
-    const data = new Uint8Array(event.data as ArrayBuffer)
-    if (data.byteLength > MAX_FRAME_BYTES) {
-      void shutdown(ControlOp.Disconnect, "Frame too large", 1009)
-      return
-    }
-    void handleClientFrame(data)
-  })
-
-  ws.addEventListener("close", () => {
-    void shutdown(null, "client closed", 1000)
-  })
-
-  ws.addEventListener("error", () => {
-    void shutdown(null, "socket error", 1011)
-  })
-
   const handleClientFrame = async (encrypted: Uint8Array) => {
     let plaintext: Uint8Array
     try {
@@ -323,6 +328,33 @@ async function bridgeEncrypted(
     } catch {
       await shutdown(ControlOp.Disconnect, "Write to VNC server failed", 1011)
     }
+  }
+
+  ws.addEventListener("message", (event) => {
+    if (closed || typeof event.data === "string") {
+      return
+    }
+    const data = new Uint8Array(event.data as ArrayBuffer)
+    if (data.byteLength > MAX_FRAME_BYTES) {
+      void shutdown(ControlOp.Disconnect, "Frame too large", 1009)
+      return
+    }
+    void handleClientFrame(data)
+  })
+
+  ws.addEventListener("close", () => {
+    void shutdown(null, "client closed", 1000)
+  })
+
+  ws.addEventListener("error", () => {
+    void shutdown(null, "socket error", 1011)
+  })
+
+  for (const frame of pendingFrames) {
+    if (closed) {
+      break
+    }
+    await handleClientFrame(frame)
   }
 
   remote.closed
@@ -353,16 +385,23 @@ async function bridgeEncrypted(
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url)
+    try {
+      const url = new URL(request.url)
 
-    if (request.method === "GET" && url.pathname === "/connect") {
-      return handleConnect(request, env)
+      if (request.method === "GET" && url.pathname === "/connect") {
+        return await handleConnect(request, env)
+      }
+
+      if (request.method === "GET" && url.pathname === "/health") {
+        return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } })
+      }
+
+      return badRequest("Not found", 404)
+    } catch {
+      return new Response("Service unavailable", {
+        status: 500,
+        headers: { "content-type": "text/plain" },
+      })
     }
-
-    if (request.method === "GET" && url.pathname === "/health") {
-      return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } })
-    }
-
-    return badRequest("Not found", 404)
   },
 }

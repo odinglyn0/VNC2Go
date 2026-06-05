@@ -108,10 +108,10 @@ export async function POST(request: Request): Promise<Response> {
   let proxyBase: string
   try {
     proxyBase = getProxyBase()
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Proxy is not configured" },
-      { status: 500 },
+      { error: "The proxy is not configured" },
+      { status: 500, headers: { "cache-control": "no-store" } },
     )
   }
 

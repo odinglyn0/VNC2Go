@@ -4,7 +4,10 @@
   "compatibility_date": "2026-06-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
-    "enabled": true
+    "enabled": false,
+    "logs": {
+      "enabled": false
+    }
   },
   "vars": {
     "ALLOWED_ORIGINS": "https://vnc2go.odinglynn.com"

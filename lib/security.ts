@@ -97,3 +97,14 @@ export function buildCookie(
   }
   return segments.join("; ")
 }
+
+export async function withSafeErrors(handler: () => Promise<Response>): Promise<Response> {
+  try {
+    return await handler()
+  } catch {
+    return new Response(JSON.stringify({ error: "Something went wrong. Please try again." }), {
+      status: 500,
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
+    })
+  }
+}
