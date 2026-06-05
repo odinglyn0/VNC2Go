@@ -306,10 +306,8 @@ export function VncSearch() {
                 colors={gradientColors}
                 distortion={0.39}
                 swirl={0.2}
-                grainMixer={0.48}
-                grainOverlay={0.61}
                 speed={0.5}
-                scale={1.08}
+                scale={0.5}
               />
             </div>
             <div className="relative h-full w-full">

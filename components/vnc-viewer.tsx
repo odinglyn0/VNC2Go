@@ -28,6 +28,7 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
   ref,
 ) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
+  const mirrorRef = React.useRef<HTMLCanvasElement | null>(null)
   const rfbRef = React.useRef<RFB | null>(null)
   const [showLoader, setShowLoader] = React.useState(true)
 
@@ -69,6 +70,38 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
     }),
     [],
   )
+
+  React.useEffect(() => {
+    let raf = 0
+    let disposed = false
+
+    const draw = () => {
+      if (disposed) {
+        return
+      }
+      const mirror = mirrorRef.current
+      const container = containerRef.current
+      const source = container?.querySelector("canvas") as HTMLCanvasElement | null
+      if (mirror && source && source.width > 0 && source.height > 0) {
+        if (mirror.width !== source.width || mirror.height !== source.height) {
+          mirror.width = source.width
+          mirror.height = source.height
+        }
+        const ctx = mirror.getContext("2d")
+        if (ctx) {
+          ctx.clearRect(0, 0, mirror.width, mirror.height)
+          ctx.drawImage(source, 0, 0)
+        }
+      }
+      raf = requestAnimationFrame(draw)
+    }
+
+    raf = requestAnimationFrame(draw)
+    return () => {
+      disposed = true
+      cancelAnimationFrame(raf)
+    }
+  }, [proxyUrl])
 
   React.useEffect(() => {
     const container = containerRef.current
@@ -161,14 +194,21 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
   }, [proxyUrl])
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-lg bg-transparent">
-      <div
-        ref={containerRef}
-        className="absolute inset-0 h-full w-full"
-        aria-label={`VNC session for ${target.display}`}
+    <div className="relative h-full w-full bg-transparent">
+      <canvas
+        ref={mirrorRef}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-[1.03] object-contain opacity-80 blur-2xl"
       />
+      <div className="absolute inset-0 z-10 h-full w-full overflow-hidden rounded-xl">
+        <div
+          ref={containerRef}
+          className="absolute inset-0 h-full w-full"
+          aria-label={`VNC session for ${target.display}`}
+        />
+      </div>
       {showLoader ? (
-        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/40">
+        <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/40">
           <Loader inverse size="md" content={`Connecting to ${target.display}`} />
         </div>
       ) : null}
