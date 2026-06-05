@@ -5,8 +5,6 @@ import RFB from "@novnc/novnc"
 import { Loader } from "rsuite"
 
 import type { CredentialField, ResolvedTarget, VncCredentials } from "@/lib/connection"
-import { IteChannel } from "@/lib/ite-channel"
-import { ControlOp } from "@/lib/ite-protocol"
 
 type ViewerStatus = "connecting" | "credentials" | "connected" | "closed" | "error"
 
@@ -15,7 +13,6 @@ interface VncViewerProps {
   target: ResolvedTarget
   onStatusChange: (status: ViewerStatus, detail?: string) => void
   onCredentialsRequired: (fields: CredentialField[]) => void
-  onIteKey: (fingerprint: string) => void
   onActivity: () => void
 }
 
@@ -27,25 +24,22 @@ export interface VncViewerHandle {
 }
 
 export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(function VncViewer(
-  { proxyUrl, target, onStatusChange, onCredentialsRequired, onIteKey, onActivity },
+  { proxyUrl, target, onStatusChange, onCredentialsRequired, onActivity },
   ref,
 ) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const rfbRef = React.useRef<RFB | null>(null)
-  const channelRef = React.useRef<IteChannel | null>(null)
   const [showLoader, setShowLoader] = React.useState(true)
 
   const statusChangeRef = React.useRef(onStatusChange)
   const credentialsRef = React.useRef(onCredentialsRequired)
-  const iteKeyRef = React.useRef(onIteKey)
   const activityRef = React.useRef(onActivity)
 
   React.useEffect(() => {
     statusChangeRef.current = onStatusChange
     credentialsRef.current = onCredentialsRequired
-    iteKeyRef.current = onIteKey
     activityRef.current = onActivity
-  }, [onStatusChange, onCredentialsRequired, onIteKey, onActivity])
+  }, [onStatusChange, onCredentialsRequired, onActivity])
 
   React.useImperativeHandle(
     ref,
@@ -86,28 +80,7 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
     setShowLoader(true)
     statusChangeRef.current("connecting")
 
-    const channel = new IteChannel(proxyUrl, {
-      onReady: (fingerprint) => {
-        if (!disposed) {
-          iteKeyRef.current(fingerprint)
-        }
-      },
-      onControl: (event) => {
-        if (disposed) {
-          return
-        }
-        if (event.op === ControlOp.HardTimeout) {
-          statusChangeRef.current("closed", event.reason ?? "Session time limit reached")
-        } else if (event.op === ControlOp.IdleTimeout) {
-          statusChangeRef.current("closed", event.reason ?? "Disconnected due to inactivity")
-        } else if (event.op === ControlOp.Disconnect) {
-          statusChangeRef.current("error", event.reason ?? "The session was ended")
-        }
-      },
-    })
-    channelRef.current = channel
-
-    const rfb = new RFB(container, channel as unknown as WebSocket)
+    const rfb = new RFB(container, proxyUrl)
     rfb.viewOnly = false
     rfb.focusOnClick = true
     rfb.scaleViewport = true
@@ -183,7 +156,6 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
         statusChangeRef.current("closed")
       }
       rfbRef.current = null
-      channelRef.current = null
     }
   }, [proxyUrl])
 
