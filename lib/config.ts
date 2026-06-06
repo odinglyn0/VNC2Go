@@ -2,7 +2,7 @@ export const SESSION_LIMITS = {
   standardHardCapMs: 0,
   privateHardCapMs: 10 * 60 * 1000,
   idleTimeoutMs: 3 * 60 * 1000,
-  tokenTtlSeconds: 60,
+  tokenTtlSeconds: 240,
   humanPassTtlSeconds: 15 * 60,
 } as const
 
