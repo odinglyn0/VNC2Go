@@ -56,6 +56,28 @@ interface RemoteConnection {
   close: () => void
 }
 
+function describeRemoteFailure(error: unknown, claims: VncTokenClaims): string {
+  const message = error instanceof Error ? error.message : String(error)
+  const lower = message.toLowerCase()
+
+  if (message === "Private mode proxy is not configured") {
+    return "Private mode is not available right now."
+  }
+  if (lower.includes("cannot connect to the specified address") || lower.includes("disallowed")) {
+    return "That address is blocked. Use a public VNC server address and port."
+  }
+  if (claims.privateMode && lower.includes("proxy")) {
+    return "The private proxy refused the connection. Try again or disable private mode."
+  }
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return `Timed out reaching ${claims.host}:${claims.port}. The port may be closed or firewalled.`
+  }
+  if (lower.includes("refused")) {
+    return `${claims.host}:${claims.port} refused the connection. Is VNC listening on that port?`
+  }
+  return `Could not reach ${claims.host}:${claims.port}. Confirm the port is open to the internet.`
+}
+
 async function openRemote(claims: VncTokenClaims, env: Env): Promise<RemoteConnection> {
   if (claims.privateMode) {
     if (!env.WEBSHARE_PROXY_USERNAME || !env.WEBSHARE_PROXY_PASSWORD) {
