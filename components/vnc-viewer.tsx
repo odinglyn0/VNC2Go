@@ -8,6 +8,63 @@ import type { CredentialField, ResolvedTarget, VncCredentials } from "@/lib/conn
 
 type ViewerStatus = "connecting" | "credentials" | "connected" | "closed" | "error"
 
+const CLOSE_NORMAL = 1000
+const CLOSE_NO_STATUS = 1005
+const CLOSE_ABNORMAL = 1006
+const CLOSE_IDLE_TIMEOUT = 4000
+const CLOSE_HARD_CAP = 4001
+const CLOSE_FRAME_TOO_LARGE = 4009
+const CLOSE_REMOTE_UNREACHABLE = 4502
+const CLOSE_WRITE_FAILED = 4503
+const CLOSE_CONNECTION_LOST = 4504
+const CLOSE_SERVER_CLOSED = 4505
+
+const CLOSE_MESSAGES: Record<number, string> = {
+  [CLOSE_NORMAL]: "The session ended.",
+  [CLOSE_IDLE_TIMEOUT]: "Disconnected after 3 minutes of inactivity.",
+  [CLOSE_HARD_CAP]: "The private session reached its 10 minute limit.",
+  [CLOSE_FRAME_TOO_LARGE]: "The VNC server sent too much data at once.",
+  [CLOSE_REMOTE_UNREACHABLE]:
+    "Could not reach the VNC server. Check the address and that the server is online.",
+  [CLOSE_WRITE_FAILED]: "Lost the link to the VNC server.",
+  [CLOSE_CONNECTION_LOST]: "The connection to the VNC server was lost.",
+  [CLOSE_SERVER_CLOSED]: "The VNC server closed the connection.",
+}
+
+const GRACEFUL_CLOSE_CODES = new Set([
+  CLOSE_NORMAL,
+  CLOSE_NO_STATUS,
+  CLOSE_IDLE_TIMEOUT,
+  CLOSE_HARD_CAP,
+  CLOSE_SERVER_CLOSED,
+])
+
+function isGracefulClose(info: { code: number; reason: string } | null): boolean {
+  if (!info) {
+    return false
+  }
+  return GRACEFUL_CLOSE_CODES.has(info.code)
+}
+
+function describeClose(
+  info: { code: number; reason: string } | null,
+  clean: boolean,
+): string {
+  if (info) {
+    if (info.reason && info.reason.trim().length > 0) {
+      return info.reason.trim()
+    }
+    const mapped = CLOSE_MESSAGES[info.code]
+    if (mapped) {
+      return mapped
+    }
+    if (info.code === CLOSE_ABNORMAL) {
+      return "Could not reach the VNC server. Check the address and that the server is online."
+    }
+  }
+  return clean ? "The session ended." : "The connection was lost unexpectedly."
+}
+
 interface VncViewerProps {
   proxyUrl: string
   target: ResolvedTarget
@@ -59,7 +116,11 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
         statusChangeRef.current("connecting")
       },
       disconnect() {
-        rfbRef.current?.disconnect()
+        try {
+          rfbRef.current?.disconnect()
+        } catch {
+          rfbRef.current = null
+        }
       },
       sendCtrlAltDel() {
         rfbRef.current?.sendCtrlAltDel()
@@ -110,10 +171,18 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
     }
 
     let disposed = false
+    let connectionClosed = false
+    let closeInfo: { code: number; reason: string } | null = null
     setShowLoader(true)
     statusChangeRef.current("connecting")
 
-    const rfb = new RFB(container, proxyUrl)
+    const socket = new WebSocket(proxyUrl)
+    socket.binaryType = "arraybuffer"
+    socket.addEventListener("close", (event) => {
+      closeInfo = { code: event.code, reason: event.reason }
+    })
+
+    const rfb = new RFB(container, socket)
     rfb.viewOnly = false
     rfb.focusOnClick = true
     rfb.scaleViewport = true
@@ -135,14 +204,16 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
     }
 
     const handleDisconnect = (event: CustomEvent<{ clean: boolean }>) => {
+      connectionClosed = true
       if (disposed) {
         return
       }
       setShowLoader(false)
-      if (event.detail.clean) {
-        statusChangeRef.current("closed", "The session ended.")
+      const message = describeClose(closeInfo, event.detail.clean)
+      if (event.detail.clean && isGracefulClose(closeInfo)) {
+        statusChangeRef.current("closed", message)
       } else {
-        statusChangeRef.current("error", "The connection was lost unexpectedly.")
+        statusChangeRef.current("error", message)
       }
     }
 
@@ -156,6 +227,7 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
     }
 
     const handleSecurityFailure = (event: CustomEvent<{ status: number; reason?: string }>) => {
+      connectionClosed = true
       if (disposed) {
         return
       }
@@ -184,10 +256,12 @@ export const VncViewer = React.forwardRef<VncViewerHandle, VncViewerProps>(funct
       container.removeEventListener("mousedown", markActivity)
       container.removeEventListener("keydown", markActivity)
       container.removeEventListener("touchstart", markActivity)
-      try {
-        rfb.disconnect()
-      } catch {
-        statusChangeRef.current("closed")
+      if (!connectionClosed) {
+        try {
+          rfb.disconnect()
+        } catch {
+          statusChangeRef.current("closed")
+        }
       }
       rfbRef.current = null
     }

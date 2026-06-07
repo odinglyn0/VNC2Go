@@ -15,6 +15,15 @@ export interface Env {
 const MAX_PORT = 65535
 const MAX_FRAME_BYTES = 4 * 1024 * 1024
 
+const CLOSE_NORMAL = 1000
+const CLOSE_REMOTE_UNREACHABLE = 4502
+const CLOSE_IDLE_TIMEOUT = 4000
+const CLOSE_HARD_CAP = 4001
+const CLOSE_FRAME_TOO_LARGE = 4009
+const CLOSE_WRITE_FAILED = 4503
+const CLOSE_CONNECTION_LOST = 4504
+const CLOSE_SERVER_CLOSED = 4505
+
 function parseAllowedOrigins(raw: string): string[] {
   return raw
     .split(",")
@@ -82,9 +91,13 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
   let remote: RemoteConnection
   try {
     remote = await openRemote(claims, env)
-  } catch {
+  } catch (error) {
+    const reason =
+      error instanceof Error && error.message === "Private mode proxy is not configured"
+        ? "Private mode is not available right now."
+        : "Could not reach the VNC server. Check the address and that the server is online."
     try {
-      ws.close(1011, "remote unreachable")
+      ws.close(CLOSE_REMOTE_UNREACHABLE, reason)
     } catch {
       void 0
     }
@@ -129,7 +142,7 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
       clearTimeout(idleTimer)
     }
     idleTimer = setTimeout(() => {
-      shutdown("Disconnected after 3 minutes of inactivity", 4000)
+      shutdown("Disconnected after 3 minutes of inactivity.", CLOSE_IDLE_TIMEOUT)
     }, claims.idleCapMs)
   }
 
@@ -141,7 +154,7 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
     const tick = () => {
       const remaining = deadline - Date.now()
       if (remaining <= 0) {
-        shutdown("Private session reached its 10 minute limit", 4001)
+        shutdown("Private session reached its 10 minute limit.", CLOSE_HARD_CAP)
         return
       }
       hardTimer = setTimeout(tick, Math.min(remaining, 30_000))
@@ -158,26 +171,26 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
       return
     }
     if (data.byteLength > MAX_FRAME_BYTES) {
-      shutdown("Frame too large", 1009)
+      shutdown("The VNC server sent too much data at once.", CLOSE_FRAME_TOO_LARGE)
       return
     }
     armIdle()
     const copy = new Uint8Array(data.byteLength)
     copy.set(data)
-    writer.write(copy).catch(() => shutdown("Write to VNC server failed", 1011))
+    writer.write(copy).catch(() => shutdown("Lost the link to the VNC server.", CLOSE_WRITE_FAILED))
   })
 
   ws.addEventListener("close", () => {
-    shutdown("client closed", 1000)
+    shutdown("client closed", CLOSE_NORMAL)
   })
 
   ws.addEventListener("error", () => {
-    shutdown("socket error", 1011)
+    shutdown("The connection was lost unexpectedly.", CLOSE_CONNECTION_LOST)
   })
 
   remote.closed
-    .then(() => shutdown("The VNC server closed the connection", 1000))
-    .catch(() => shutdown("The connection was lost", 1011))
+    .then(() => shutdown("The VNC server closed the connection.", CLOSE_SERVER_CLOSED))
+    .catch(() => shutdown("The connection to the VNC server was lost.", CLOSE_CONNECTION_LOST))
 
   armIdle()
   scheduleHardCap()
@@ -195,9 +208,9 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
         ws.send(copy)
       }
     }
-    shutdown("The VNC server closed the connection", 1000)
+    shutdown("The VNC server closed the connection.", CLOSE_SERVER_CLOSED)
   } catch {
-    shutdown("The connection was lost", 1011)
+    shutdown("The connection to the VNC server was lost.", CLOSE_CONNECTION_LOST)
   }
 }
 
@@ -238,7 +251,7 @@ async function handleConnect(request: Request, env: Env, ctx: ExecutionContext):
   ctx.waitUntil(
     runSession(server, claims, env).catch(() => {
       try {
-        server.close(1011, "session error")
+        server.close(CLOSE_CONNECTION_LOST, "The session ended unexpectedly.")
       } catch {
         void 0
       }
