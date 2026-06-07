@@ -77,6 +77,7 @@ async function openRemote(claims: VncTokenClaims, env: Env): Promise<RemoteConne
     { hostname: claims.host, port: claims.port },
     { allowHalfOpen: false, secureTransport: "off" },
   )
+  await socket.opened
   return {
     readable: socket.readable,
     writable: socket.writable,
@@ -92,12 +93,8 @@ async function runSession(ws: WebSocket, claims: VncTokenClaims, env: Env): Prom
   try {
     remote = await openRemote(claims, env)
   } catch (error) {
-    const reason =
-      error instanceof Error && error.message === "Private mode proxy is not configured"
-        ? "Private mode is not available right now."
-        : "Could not reach the VNC server. Check the address and that the server is online."
     try {
-      ws.close(CLOSE_REMOTE_UNREACHABLE, reason)
+      ws.close(CLOSE_REMOTE_UNREACHABLE, describeRemoteFailure(error, claims))
     } catch {
       void 0
     }
